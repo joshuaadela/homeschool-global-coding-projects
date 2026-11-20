@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sky Safe</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #87ceeb;
+    font-family: "Trebuchet MS", system-ui, sans-serif; color: #fff; }
+  canvas { display: block; }
+
+  /* The info box in the top-left corner */
+  #hud { position: fixed; top: 16px; left: 16px; background: rgba(0, 30, 60, 0.6);
+    padding: 12px 16px; border-radius: 12px; font-size: 16px; line-height: 1.6; min-width: 200px; }
+  #hud b { color: #ffd166; }
+  .bar { height: 10px; background: rgba(255,255,255,0.25); border-radius: 5px; overflow: hidden; }
+  #throttleFill { height: 100%; width: 0%; background: linear-gradient(90deg, #06d6a0, #ffd166, #ef476f); }
+
+  /* Warnings like STALL or PULL UP */
+  #warning { position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    font-size: 26px; font-weight: bold; color: #ff4d4d; text-shadow: 0 2px 4px #000; }
+
+  /* Big messages in the middle of the screen */
+  #message { position: fixed; top: 28%; width: 100%; text-align: center; font-size: 34px;
+    font-weight: bold; text-shadow: 0 3px 6px rgba(0,0,0,0.6); pointer-events: none;
+    transition: opacity 0.4s; opacity: 0; padding: 0 16px; }
+
+  /* Start screen, crash screen and win screen */
+  .panel { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 20, 50, 0.55); padding: 16px; }
+  .card { background: #fff; color: #1d3557; border-radius: 18px; padding: 28px 32px;
+    max-width: 520px; width: 100%; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.4); }
+  .card h1 { margin: 0 0 8px; font-size: 38px; }
+  .card p { font-size: 17px; line-height: 1.5; }
+  .keys { text-align: left; display: inline-block; font-size: 16px; line-height: 1.9; }
+  kbd { background: #1d3557; color: #fff; border-radius: 6px; padding: 2px 8px; font-family: inherit; }
+  button { margin-top: 14px; font-size: 22px; font-weight: bold; padding: 12px 30px; border: none;
+    border-radius: 12px; background: #ef476f; color: #fff; cursor: pointer; font-family: inherit; }
+  button:hover { background: #d63a5f; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  Speed: <b id="speed">0</b><br>
+  Height: <b id="alt">0</b><br>
+  Rings: <b id="rings">0 / 0</b><br>
+  Engine power:
+  <div class="bar"><div id="throttleFill"></div></div>
+</div>
+<div id="warning"></div>
+<div id="message"></div>
+
+<!-- Start screen -->
+<div id="startPanel" class="panel">
+  <div class="card">
+    <h1>✈️ Sky Safe</h1>
+    <p>Take off, fly through all the <b>yellow rings</b>, then land safely back on the runway and stop!</p>
+    <div class="keys">
+      <kbd>W</kbd> / <kbd>S</kbd> &nbsp;more / less engine power<br>
+      <kbd>↑</kbd> / <kbd>↓</kbd> &nbsp;nose up / nose down<br>
+      <kbd>←</kbd> / <kbd>→</kbd> &nbsp;turn left / right<br>
+      <kbd>R</kbd> &nbsp;start over
+    </div>
+    <p>Tips: Speed up to <b>32</b> before pulling up. Don't fly too slow or you'll stall!
+      Follow the yellow arrow. Look for birds flying by! Land gently with level wings.</p>
+    <button id="startBtn">Start Flying!</button>
+  </div>
+</div>
+
+<!-- Crash / win screen -->
+<div id="resultPanel" class="panel hidden">
+  <div class="card">
+    <h1 id="resultTitle"></h1>
+    <p id="resultText"></p>
+    <button id="againBtn">Fly Again</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// =====================================================
+//  SETTINGS — try changing these numbers and see what happens!
+// =====================================================
+const MAX_SPEED       = 90;   // fastest the plane can go
+const TAKEOFF_SPEED   = 32;   // need this much speed to lift off
+const STALL_SPEED     = 26;   // slower than this in the air = falling!
+const SAFE_SINK_RATE  = 12;   // how fast you can come down and still land safely
+const CEILING         = 400;  // highest you can fly
+const RUNWAY_LENGTH   = 600;
+const RUNWAY_WIDTH    = 40;
+const RING_SIZE       = 18;
+
+// The rings you have to fly through, in order (x, height, z, size)
+// The size is optional — bigger rings are easier!
+const RING_SPOTS = [
+  [0, 45, -500],
+  [-200, 90, -950],
+  [-650, 140, -900],
+  [-950, 110, -400],
+  [-850, 80, 300],
+  [-450, 120, 850, 30], // higher and bigger = easier
+  [0, 100, 900, 30],    // higher and bigger = easier
+];
+
+// =====================================================
+//  SETTING UP THE 3D WORLD
+// =====================================================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 500, 2400);
+
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 1, 5000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// Lights (like the sun)
+scene.add(new THREE.HemisphereLight(0xffffff, 0x4a7a3a, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(300, 500, 200);
+scene.add(sun);
+
+// A random number maker that gives the same world every time
+let seed = 12345;
+function random() {
+  seed = (seed + 0x6D2B79F5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+function flat(mesh) { mesh.rotation.x = -Math.PI / 2; return mesh; }
+
+// Grass
+const ground = flat(new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000),
+  new THREE.MeshLambertMaterial({ color: 0x5fae4a })));
+scene.add(ground);
+
+// Runway
+const runway = flat(new THREE.Mesh(new THREE.PlaneGeometry(RUNWAY_WIDTH, RUNWAY_LENGTH),
+  new THREE.MeshLambertMaterial({ color: 0x4a4a4a })));
+runway.position.y = 0.3;
+scene.add(runway);
+
+const whiteMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+for (let z = -RUNWAY_LENGTH / 2 + 30; z < RUNWAY_LENGTH / 2 - 20; z += 40) {
+  const stripe = flat(new THREE.Mesh(new THREE.PlaneGeometry(1.5, 18), whiteMat));
+  stripe.position.set(0, 0.6, z);
+  scene.add(stripe);
+}
+// Thick white lines at both ends of the runway
+for (const end of [-1, 1]) {
+  for (let x = -15; x <= 15; x += 5) {
+    const bar = flat(new THREE.Mesh(new THREE.PlaneGeometry(2.5, 14), whiteMat));
+    bar.position.set(x, 0.6, end * (RUNWAY_LENGTH / 2 - 12));
+    scene.add(bar);
+  }
+}
+// Little lights along the edges
+const lightGeo = new THREE.BoxGeometry(1, 1, 1);
+const lightMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
+for (let z = -RUNWAY_LENGTH / 2; z <= RUNWAY_LENGTH / 2; z += 30) {
+  for (const side of [-1, 1]) {
+    const light = new THREE.Mesh(lightGeo, lightMat);
+    light.position.set(side * (RUNWAY_WIDTH / 2 + 2), 0.5, z);
+    scene.add(light);
+  }
+}
+
+// ---------- Rings ----------
+const rings = RING_SPOTS.map(([x, y, z, size = RING_SIZE], i) => {
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(size, 1.6, 10, 40), new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true }));
+  ring.position.set(x, y, z);
+  // Turn each ring to face the next one (the last one faces the runway)
+  const next = RING_SPOTS[i + 1] || [0, 0, 0];
+  ring.lookAt(next[0], next[1], next[2]);
+  ring.userData.size = size;
+  scene.add(ring);
+  return ring;
+});
+
+// ---------- Clouds (you can fly through them!) ----------
+const puffGeo = new THREE.SphereGeometry(1, 10, 8);
+const cloudMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+for (let i = 0; i < 45; i++) {
+  const cloud = new THREE.Group();
+  for (let p = 0; p < 5; p++) {
+    const puff = new THREE.Mesh(puffGeo, cloudMat);
+    const s = 15 + random() * 20;
+    puff.scale.set(s, s * 0.6, s);
+    puff.position.set((random() - 0.5) * 60, (random() - 0.5) * 10, (random() - 0.5) * 30);
+    cloud.add(puff);
+  }
+  cloud.position.set((random() - 0.5) * 4000, 180 + random() * 150, (random() - 0.5) * 4000);
+  scene.add(cloud);
+}
+
+
+// ---------- Birds (they fly by at random times) ----------
+const birdMat = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide });
+const birdWingGeo = new THREE.PlaneGeometry(3, 1.2);
+let birds = [];
+let birdTimer = 3;
+
+function makeBird() {
+  const bird = new THREE.Group();
+  const leftWing = new THREE.Mesh(birdWingGeo, birdMat);
+  const rightWing = new THREE.Mesh(birdWingGeo, birdMat);
+  // Each wing is attached at the bird's middle so it can flap
+  const leftPivot = new THREE.Group(), rightPivot = new THREE.Group();
+  leftWing.position.x = -1.5; rightWing.position.x = 1.5;
+  leftWing.rotation.x = rightWing.rotation.x = -Math.PI / 2;
+  leftPivot.add(leftWing); rightPivot.add(rightWing);
+  bird.add(leftPivot, rightPivot);
+  bird.userData = { leftPivot, rightPivot, flap: Math.random() * 6 };
+  return bird;
+}
+
+function spawnBirdFlock() {
+  // A small flock appears somewhere ahead of the plane and flies across
+  const count = 3 + Math.floor(Math.random() * 5);
+  const ahead = plane.position.clone().addScaledVector(forwardDirection(), 150 + Math.random() * 150);
+  ahead.x += (Math.random() - 0.5) * 150;
+  ahead.y = Math.max(25, plane.position.y + (Math.random() - 0.3) * 50);
+  const angle = Math.random() * Math.PI * 2;
+  const vel = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)).multiplyScalar(15 + Math.random() * 10);
+  for (let i = 0; i < count; i++) {
+    const bird = makeBird();
+    bird.position.copy(ahead).add(new THREE.Vector3((Math.random() - 0.5) * 25, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 25));
+    bird.lookAt(bird.position.clone().add(vel));
+    scene.add(bird);
+    birds.push({ mesh: bird, vel, life: 25 });
+  }
+}
+
+function updateBirds(dt) {
+  birdTimer -= dt;
+  if (birdTimer <= 0) {
+    spawnBirdFlock();
+    birdTimer = 6 + Math.random() * 12; // next flock comes at a random time
+  }
+  birds = birds.filter(b => {
+    b.life -= dt;
+    b.mesh.position.addScaledVector(b.vel, dt);
+    b.mesh.userData.flap += dt * 10;
+    const wing = Math.sin(b.mesh.userData.flap) * 0.6;
+    b.mesh.userData.leftPivot.rotation.z = -wing;
+    b.mesh.userData.rightPivot.rotation.z = wing;
+    if (b.life <= 0) { scene.remove(b.mesh); return false; }
+    return true;
+  });
+}
+
+// =====================================================
+//  THE AIRPLANE
+// =====================================================
+function makePlane() {
+  const plane = new THREE.Group();
+  const red = new THREE.MeshLambertMaterial({ color: 0xe63946 });
+  const white = new THREE.MeshLambertMaterial({ color: 0xf1faee });
+  const glass = new THREE.MeshLambertMaterial({ color: 0x4fc3f7 });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x222222 });
+
+  function part(geo, mat, x, y, z, sx = 1, sy = 1, sz = 1) {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz); // stretch it to change its shape
+    plane.add(m);
+    return m;
+  }
+  const ball = new THREE.SphereGeometry(1, 24, 16); // a round ball we squish into different shapes
+
+  const body = part(new THREE.CylinderGeometry(1, 1, 6, 24), red, 0, 0, 0); // round body
+  body.rotation.x = Math.PI / 2;
+  part(ball, red, 0, 0, -3);                                       // round nose
+  const tail = part(new THREE.CylinderGeometry(0.35, 1, 3, 24), red, 0, 0, 4.5); // body gets thinner at the back
+  tail.rotation.x = Math.PI / 2;
+  part(ball, red, 0, 0, 6, 0.35, 0.35, 0.35);                      // round tip of the tail
+  part(ball, white, 0, 0, -0.6, 6, 0.22, 1.3);                     // main wings (a squished ball!)
+  part(ball, white, 0, 0.3, 5.2, 2.3, 0.15, 0.7);                  // back wings
+  part(ball, red, 0, 1.1, 5.3, 0.15, 1.3, 0.9);                    // tail fin
+  part(ball, glass, 0, 0.8, -1.2, 0.7, 0.6, 1.2);                  // bubble cockpit window
+  part(ball, dark, 0, 0, -3.9, 0.4, 0.4, 0.4);                     // propeller middle
+  // wheels
+  const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.4, 16);
+  for (const [x, z] of [[-1.5, -1], [1.5, -1], [0, 3]]) {
+    const w = part(wheelGeo, dark, x, -1.4, z);
+    w.rotation.z = Math.PI / 2;
+  }
+  // propeller (it spins!)
+  const prop = part(ball, dark, 0, 0, -4.2, 2.3, 0.25, 0.1);
+  plane.userData.prop = prop;
+  return plane;
+}
+const plane = makePlane();
+plane.rotation.order = 'YXZ'; // turn (yaw), then tilt nose (pitch), then tip wings (roll)
+scene.add(plane);
+const WHEEL_HEIGHT = 1.9; // how high the middle of the plane is when sitting on its wheels
+
+// A dark shadow on the ground under the plane — helps you know how high you are
+const shadow = flat(new THREE.Mesh(new THREE.CircleGeometry(5, 20),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 })));
+scene.add(shadow);
+
+// The yellow arrow that points where to go next
+const arrowGeo = new THREE.ConeGeometry(1.2, 4, 8);
+arrowGeo.rotateX(Math.PI / 2); // make it point forward
+const arrow = new THREE.Mesh(arrowGeo, new THREE.MeshBasicMaterial({ color: 0xffd166 }));
+scene.add(arrow);
+
+// =====================================================
+//  SOUND
+// =====================================================
+let audio = null, engineOsc = null, engineGain = null;
+function startAudio() {
+  if (audio) return;
+  try {
+    audio = new (window.AudioContext || window.webkitAudioContext)();
+    engineOsc = audio.createOscillator();
+    engineOsc.type = 'sawtooth';
+    const filter = audio.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 350;
+    engineGain = audio.createGain();
+    engineGain.gain.value = 0.05;
+    engineOsc.connect(filter).connect(engineGain).connect(audio.destination);
+    engineOsc.start();
+  } catch (e) { audio = null; }
+}
+function beep(freq, duration, type = 'sine', volume = 0.15) {
+  if (!audio) return;
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(volume, audio.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + duration);
+  osc.connect(gain).connect(audio.destination);
+  osc.start();
+  osc.stop(audio.currentTime + duration);
+}
+
+// =====================================================
+//  KEYBOARD
+// =====================================================
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+  if (e.code === 'KeyR' && game.started) resetGame();
+  if (e.code === 'Enter' && !game.started) startGame();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+// =====================================================
+//  GAME STATE
+// =====================================================
+const game = {};
+let particles = [];
+
+function resetGame() {
+  Object.assign(game, {
+    pos: new THREE.Vector3(0, 0, 250), // start at the south end of the runway
+    yaw: 0, pitch: 0, roll: 0,
+    speed: 0, throttle: 0,
+    grounded: true, crashed: false, won: false,
+    nextRing: 0, time: 0,
+    started: game.started || false,
+  });
+  plane.visible = true;
+  shadow.visible = true;
+  rings.forEach(r => { r.visible = true; });
+  particles.forEach(p => scene.remove(p.mesh));
+  particles = [];
+  document.getElementById('resultPanel').classList.add('hidden');
+  if (engineGain) engineGain.gain.value = 0.05;
+  updatePlaneMesh();
+  placeCameraBehindPlane(1);
+  if (game.started) showMessage('Press W to start the engine!', 3);
+}
+
+function startGame() {
+  game.started = true;
+  document.getElementById('startPanel').classList.add('hidden');
+  startAudio();
+  resetGame();
+}
+document.getElementById('startBtn').onclick = startGame;
+document.getElementById('againBtn').onclick = resetGame;
+
+// =====================================================
+//  MESSAGES
+// =====================================================
+let messageTimer = 0;
+function showMessage(text, seconds = 2.5) {
+  const el = document.getElementById('message');
+  el.textContent = text;
+  el.style.opacity = 1;
+  messageTimer = seconds;
+}
+function showResult(title, text) {
+  document.getElementById('resultTitle').textContent = title;
+  document.getElementById('resultText').textContent = text;
+  document.getElementById('resultPanel').classList.remove('hidden');
+}
+
+// =====================================================
+//  CRASH!
+// =====================================================
+function crash(reason) {
+  game.crashed = true;
+  plane.visible = false;
+  shadow.visible = false;
+  if (engineGain) engineGain.gain.value = 0;
+  beep(80, 1.2, 'sawtooth', 0.3);
+  beep(50, 1.5, 'square', 0.2);
+
+  // Make an explosion out of lots of little balls
+  const colors = [0xff6b35, 0xffd166, 0xef476f, 0x555555];
+  for (let i = 0; i < 40; i++) {
+    const mesh = new THREE.Mesh(puffGeo, new THREE.MeshBasicMaterial({ color: colors[i % 4], transparent: true }));
+    mesh.position.copy(plane.position);
+    scene.add(mesh);
+    particles.push({
+      mesh,
+      vel: new THREE.Vector3((Math.random() - 0.5) * 40, Math.random() * 30, (Math.random() - 0.5) * 40),
+      life: 1.5 + Math.random(),
+    });
+  }
+  setTimeout(() => { if (game.crashed) showResult('💥 Crash!', reason); }, 1200);
+}
+
+// =====================================================
+//  FLYING — this runs every frame
+// =====================================================
+function forwardDirection() {
+  return new THREE.Vector3(
+    -Math.sin(game.yaw) * Math.cos(game.pitch),
+    Math.sin(game.pitch),
+    -Math.cos(game.yaw) * Math.cos(game.pitch)
+  );
+}
+
+function update(dt) {
+  if (!game.started || game.crashed || game.won) return;
+  game.time += dt;
+
+  const up = keys.ArrowUp, down = keys.ArrowDown;
+  const left = keys.ArrowLeft, right = keys.ArrowRight;
+
+  // --- Engine power ---
+  if (keys.KeyW) game.throttle += 0.5 * dt;
+  if (keys.KeyS) game.throttle -= 0.5 * dt;
+  game.throttle = THREE.MathUtils.clamp(game.throttle, 0, 1);
+
+  // --- Speed ---
+  const targetSpeed = game.throttle * MAX_SPEED;
+  game.speed += (targetSpeed - game.speed) * 0.4 * dt;
+  if (!game.grounded) game.speed -= Math.sin(game.pitch) * 15 * dt; // going up slows you, going down speeds you up
+  if (game.grounded && game.throttle < 0.05) game.speed -= 15 * dt; // brakes
+  game.speed = Math.max(0, game.speed);
+
+  let stalling = false;
+
+  if (game.grounded) {
+    // --- Driving on the ground ---
+    game.roll = 0;
+    game.pitch = 0;
+    const steer = Math.min(1, game.speed / 10) * 0.6 * dt;
+    if (left) game.yaw += steer;
+    if (right) game.yaw -= steer;
+    if (up && game.speed >= TAKEOFF_SPEED) {
+      game.grounded = false;
+      game.pitch = 0.12;
+      showMessage('Liftoff! 🛫');
+      beep(660, 0.3);
+    } else if (up && game.speed > 5) {
+      showMessage('Need more speed to lift off!', 0.5);
+    }
+  } else {
+    // --- Flying in the air ---
+    if (left) game.roll += 1.5 * dt;
+    else if (right) game.roll -= 1.5 * dt;
+    else game.roll -= game.roll * 2 * dt; // wings go back to level by themselves
+    game.roll = THREE.MathUtils.clamp(game.roll, -0.9, 0.9);
+
+    if (up) game.pitch += 0.8 * dt;
+    else if (down) game.pitch -= 0.8 * dt;
+    else game.pitch -= game.pitch * 0.8 * dt;
+
+    // Too slow? The plane can't stay up — the nose drops!
+    if (game.speed < STALL_SPEED) {
+      stalling = true;
+      game.pitch -= 0.7 * dt;
+    }
+    game.pitch = THREE.MathUtils.clamp(game.pitch, -0.7, 0.7);
+
+    game.yaw += game.roll * 1.0 * dt; // tipping the wings makes the plane turn
+  }
+
+  // --- Move the plane ---
+  const heightBefore = game.pos.y;
+  game.pos.addScaledVector(forwardDirection(), game.speed * dt);
+  if (stalling) game.pos.y -= (STALL_SPEED - game.speed) * 1.2 * dt;
+  if (game.grounded) game.pos.y = 0;
+  if (game.pos.y > CEILING) game.pos.y = CEILING;
+  const sinkRate = (heightBefore - game.pos.y) / dt; // how fast we're coming down
+
+  // --- Touching the ground ---
+  if (!game.grounded && game.pos.y <= 0) {
+    game.pos.y = 0;
+    const onRunway = Math.abs(game.pos.x) < RUNWAY_WIDTH / 2 + 2 &&
+                     Math.abs(game.pos.z) < RUNWAY_LENGTH / 2;
+    if (!onRunway) return crash('You came down on the grass. Try to land on the gray runway!');
+    if (sinkRate > SAFE_SINK_RATE) return crash('You hit the runway too hard! Come down slower — gently tap ↑ just before the ground.');
+    if (Math.abs(game.roll) > 0.35) return crash('Your wings were tipped when you landed. Keep the wings level!');
+
+    game.grounded = true;
+    game.pitch = 0;
+    game.roll = 0;
+    beep(520, 0.2); beep(780, 0.3);
+    if (game.nextRing >= rings.length) showMessage('Great landing! Now press S to slow down and stop!', 4);
+    else showMessage('Nice landing! But you still have rings to fly through.', 3);
+  }
+
+  // --- Rings ---
+  if (game.nextRing < rings.length) {
+    const ring = rings[game.nextRing];
+    if (plane.position.distanceTo(ring.position) < ring.userData.size) {
+      ring.visible = false;
+      game.nextRing++;
+      beep(880, 0.15); setTimeout(() => beep(1320, 0.2), 120);
+      if (game.nextRing === rings.length) showMessage('All rings done! 🎉 Now fly back and land on the runway!', 4);
+      else showMessage(`Ring ${game.nextRing} of ${rings.length}! ⭐`, 1.5);
+    }
+  }
+
+  // --- Did we win? ---
+  if (game.grounded && game.nextRing >= rings.length && game.speed < 2) {
+    game.won = true;
+    if (engineGain) engineGain.gain.value = 0.01;
+    [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.3), i * 150));
+    showResult('🏆 You flew safely!', `You flew through all ${rings.length} rings and landed perfectly in ${Math.round(game.time)} seconds. Can you do it faster?`);
+  }
+
+  // --- Warnings ---
+  let warning = '';
+  if (stalling) warning = '⚠️ STALL! Press W for more power!';
+  else if (!game.grounded && game.pos.y < 40 && sinkRate > SAFE_SINK_RATE) warning = '⚠️ PULL UP! Coming down too fast!';
+  else if (Math.hypot(game.pos.x, game.pos.z) > 2200) warning = '⚠️ Too far away! Turn back!';
+  document.getElementById('warning').textContent = warning;
+}
+
+// Put the 3D plane model where the game says it is
+function updatePlaneMesh() {
+  plane.position.set(game.pos.x, game.pos.y + WHEEL_HEIGHT, game.pos.z);
+  plane.rotation.set(game.pitch, game.yaw, game.roll);
+  shadow.position.set(game.pos.x, 0.8, game.pos.z);
+  const s = 1 + game.pos.y / 80;
+  shadow.scale.set(s, s, s);
+  shadow.material.opacity = Math.max(0, 0.35 - game.pos.y / 600);
+}
+
+function placeCameraBehindPlane(smooth) {
+  const behind = new THREE.Vector3(Math.sin(game.yaw), 0, Math.cos(game.yaw));
+  const want = plane.position.clone().addScaledVector(behind, 24).add(new THREE.Vector3(0, 7, 0));
+  camera.position.lerp(want, smooth);
+  camera.lookAt(plane.position.clone().addScaledVector(forwardDirection(), 12));
+}
+
+function updateHud() {
+  document.getElementById('speed').textContent = Math.round(game.speed);
+  document.getElementById('alt').textContent = Math.round(game.pos.y);
+  document.getElementById('rings').textContent = `${game.nextRing} / ${rings.length}`;
+  document.getElementById('throttleFill').style.width = (game.throttle * 100) + '%';
+}
+
+// =====================================================
+//  THE GAME LOOP
+// =====================================================
+resetGame();
+let lastTime = performance.now();
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - lastTime) / 1000); // seconds since last frame
+  lastTime = now;
+
+  update(dt);
+  if (game.started) updateBirds(dt);
+
+  if (!game.crashed) {
+    updatePlaneMesh();
+    placeCameraBehindPlane(1 - Math.exp(-4 * dt));
+  }
+  plane.userData.prop.rotation.z += (3 + game.throttle * 40) * dt;
+
+  // Make the next ring glow and pulse; the others are dimmer
+  rings.forEach((ring, i) => {
+    const isNext = i === game.nextRing;
+    ring.material.color.set(isNext ? 0xffd166 : 0xff9f1c);
+    ring.material.opacity = isNext ? 1 : 0.45;
+    const pulse = isNext ? 1 + Math.sin(now / 200) * 0.06 : 1;
+    ring.scale.set(pulse, pulse, pulse);
+  });
+
+  // Point the arrow at the next ring, or at the runway when you're done
+  const target = game.nextRing < rings.length ? rings[game.nextRing].position : new THREE.Vector3(0, 0, 0);
+  arrow.visible = !game.crashed && !game.won && !(game.grounded && game.nextRing >= rings.length);
+  arrow.position.copy(plane.position).add(new THREE.Vector3(0, 5, 0));
+  arrow.lookAt(target);
+
+  // Explosion pieces fly out and fade away
+  particles = particles.filter(p => {
+    p.life -= dt;
+    p.vel.y -= 10 * dt;
+    p.mesh.position.addScaledVector(p.vel, dt);
+    p.mesh.scale.multiplyScalar(1 + dt);
+    p.mesh.material.opacity = Math.max(0, p.life / 2);
+    if (p.life <= 0) { scene.remove(p.mesh); return false; }
+    return true;
+  });
+
+  // Engine sound gets higher with more power
+  if (engineOsc && audio) engineOsc.frequency.setTargetAtTime(45 + game.throttle * 110, audio.currentTime, 0.1);
+
+  // Fade out messages
+  if (messageTimer > 0) {
+    messageTimer -= dt;
+    if (messageTimer <= 0) document.getElementById('message').style.opacity = 0;
+  }
+
+  updateHud();
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
