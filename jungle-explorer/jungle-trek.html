@@ -1,5 +1,9 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Jungle Explorer</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800&family=Pixelify+Sans:wght@400;500;600;700&display=swap">
@@ -2458,4 +2462,9 @@ body.playing header { display: none; }
   if (hot && hot.snapshot) hot.snapshot(() => ({ save: snapshot(), view }));
   if (hot && hot.ready) hot.ready(start); else start(hot && hot.data ? hot.data : {});
 })();
+</script>
+
+<script src="../touch-controls.js"></script>
+<script>
+TouchControls({ back: 'top-right' });
 </script>

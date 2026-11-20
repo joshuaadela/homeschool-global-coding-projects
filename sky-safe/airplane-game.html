@@ -28,7 +28,8 @@
 
   /* Start screen, crash screen and win screen */
   .panel { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-    background: rgba(0, 20, 50, 0.55); padding: 16px; }
+    background: rgba(0, 20, 50, 0.55); padding: 16px; overflow-y: auto; }
+  @media (max-height: 560px) { .panel { align-items: flex-start; } .card { padding: 18px 22px; } .card h1 { font-size: 30px; } .card p { font-size: 15px; margin: 8px 0; } .keys { font-size: 14px; line-height: 1.7; } }
   .card { background: #fff; color: #1d3557; border-radius: 18px; padding: 28px 32px;
     max-width: 520px; width: 100%; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.4); }
   .card h1 { margin: 0 0 8px; font-size: 38px; }
@@ -39,6 +40,8 @@
     border-radius: 12px; background: #ef476f; color: #fff; cursor: pointer; font-family: inherit; }
   button:hover { background: #d63a5f; }
   .hidden { display: none !important; }
+  /* On touch screens the on-screen controls replace the keyboard keys, so skip the key list. */
+  html.tc-on .keys { display: none; }
 </style>
 </head>
 <body>
@@ -354,6 +357,8 @@ function beep(freq, duration, type = 'sine', volume = 0.15) {
 //  KEYBOARD
 // =====================================================
 const keys = {};
+// On touch screens, name the on-screen buttons instead of keyboard keys.
+const touchUI = () => document.documentElement.classList.contains('tc-on');
 addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
@@ -386,7 +391,7 @@ function resetGame() {
   if (engineGain) engineGain.gain.value = 0.05;
   updatePlaneMesh();
   placeCameraBehindPlane(1);
-  if (game.started) showMessage('Press W to start the engine!', 3);
+  if (game.started) showMessage(touchUI() ? 'Hold + Power to start the engine!' : 'Press W to start the engine!', 3);
 }
 
 function startGame() {
@@ -529,7 +534,7 @@ function update(dt) {
     game.pitch = 0;
     game.roll = 0;
     beep(520, 0.2); beep(780, 0.3);
-    if (game.nextRing >= rings.length) showMessage('Great landing! Now press S to slow down and stop!', 4);
+    if (game.nextRing >= rings.length) showMessage(touchUI() ? 'Great landing! Now hold − Power to slow down and stop!' : 'Great landing! Now press S to slow down and stop!', 4);
     else showMessage('Nice landing! But you still have rings to fly through.', 3);
   }
 
@@ -555,7 +560,7 @@ function update(dt) {
 
   // --- Warnings ---
   let warning = '';
-  if (stalling) warning = '⚠️ STALL! Press W for more power!';
+  if (stalling) warning = touchUI() ? '⚠️ STALL! Hold + Power!' : '⚠️ STALL! Press W for more power!';
   else if (!game.grounded && game.pos.y < 40 && sinkRate > SAFE_SINK_RATE) warning = '⚠️ PULL UP! Coming down too fast!';
   else if (Math.hypot(game.pos.x, game.pos.z) > 2200) warning = '⚠️ Too far away! Turn back!';
   document.getElementById('warning').textContent = warning;
@@ -644,6 +649,19 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+</script>
+<script src="../touch-controls.js"></script>
+<script>
+TouchControls({
+  back: 'top-right',
+  zones: [
+    { side: 'left',  when: () => !document.querySelector('.panel:not(.hidden)'), items: [ { stick: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' } } ] },
+    { side: 'right', when: () => !document.querySelector('.panel:not(.hidden)'), items: [
+      { label: '↻', code: 'KeyR', tap: true, small: true, title: 'Start over' },
+      { label: '− Power', code: 'KeyS' },
+      { label: '+ Power', code: 'KeyW', big: true } ] },
+  ],
+});
 </script>
 </body>
 </html>

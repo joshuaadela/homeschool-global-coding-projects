@@ -2176,5 +2176,18 @@
   requestAnimationFrame(loop);
 })();
 </script>
+<script src="../touch-controls.js"></script>
+<script>
+TouchControls({
+  back: 'top-left',
+  bottom: 72,
+  zones: [
+    { side: 'left',  when: () => !(document.getElementById('mode').textContent.trim() === '2P'), items: [ { label: '◀', code: 'KeyA', title: 'Move left' }, { label: '▶', code: 'KeyD', title: 'Move right' } ] },
+    { side: 'right', when: () => !(document.getElementById('mode').textContent.trim() === '2P'), items: [ { label: 'Slide', code: 'KeyS' }, { label: 'Jump', code: 'KeyW', big: true } ] },
+    { side: 'left',  when: () => document.getElementById('mode').textContent.trim() === '2P', items: [ { label: '◀', code: 'KeyA', mid: true }, { label: '▶', code: 'KeyD', mid: true }, { label: 'Slide', code: 'KeyS', mid: true }, { label: 'Jump', code: 'KeyW', mid: true } ] },
+    { side: 'right', when: () => document.getElementById('mode').textContent.trim() === '2P', items: [ { label: '◀', code: 'ArrowLeft', mid: true }, { label: '▶', code: 'ArrowRight', mid: true }, { label: 'Slide', code: 'ArrowDown', mid: true }, { label: 'Jump', code: 'ArrowUp', mid: true } ] },
+  ],
+});
+</script>
 </body>
 </html>

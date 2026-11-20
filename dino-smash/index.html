@@ -1294,5 +1294,19 @@ function frame(now){
 }
 requestAnimationFrame(frame);
 </script>
+<script src="../touch-controls.js"></script>
+<script>
+TouchControls({
+  back: 'top-left',
+  backCompact: true,
+  zones: [
+    { side: 'left',  when: () => state === 'play' && numPlayers === 1, items: [ { stick: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' } } ] },
+    { side: 'right', when: () => state === 'play' && numPlayers === 1, items: [ { label: 'Dash', code: 'ShiftLeft', big: true } ] },
+    { side: 'left',  when: () => state === 'play' && numPlayers === 2, items: [ { stick: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' } }, { label: 'Dash', code: 'ShiftLeft', title: 'Aldie dash' } ] },
+    { side: 'right', when: () => state === 'play' && numPlayers === 2, items: [ { label: 'Dash', code: 'ShiftRight', title: 'Briel dash' }, { stick: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' } } ] },
+    { side: 'top-right', when: () => state === 'play', items: [ { label: '❚❚', code: 'KeyP', tap: true, small: true, title: 'Pause' } ] },
+  ],
+});
+</script>
 </body>
 </html>
